@@ -35,9 +35,11 @@ CREATE TABLE Asistencia
 	FichaLeida BOOLEAN NOT NULL DEFAULT FALSE,
 	dni CHAR(9) NOT NULL,
 	OID_Menu SMALLINT NOT NULL,
-	FOREIGN KEY (dni) REFERENCES Alumno (dni),
-	FOREIGN KEY (OID_Menu) REFERENCES Menus (OID_MD),
-	UNIQUE (dni, OID_Menu)
+	CONSTRAINT uq_asistencia_alumno FOREIGN KEY (dni) 
+	REFERENCES Alumno (dni) ON UPDATE CASCADE ON DELETE RESTRICT,
+	CONSTRAINT uq_asistencia_menus FOREIGN KEY (OID_Menu) 
+	REFERENCES Menus (OID_MD) ON UPDATE CASCADE ON DELETE RESTRICT,
+	CONSTRAINT uq_asistencia_alumno_menu UNIQUE (dni, OID_Menu)
 );
 
 CREATE TABLE Intolerancia
@@ -109,19 +111,17 @@ DELIMITER ;
 
 
 
-
-
 -- ============================================================================
--- 1. ALUMNOS (6 perfiles que cubren todos los escenarios fijos, ocasionales y restricciones)
+-- 1. ALUMNOS
 -- ============================================================================
 INSERT INTO Alumno (Nombre, Apellidos, dni, Curso, Comedor) VALUES
--- Fijo (Comedor=TRUE) SIN alergias ni intolerancias (para consultar "comensales sin restricciones")
+-- Fijo (Comedor=TRUE) SIN alergias ni intolerancias
 ('Ana', 'Gómez Pérez', '11111111A', 1, TRUE),
 
--- Fijo (Comedor=TRUE) SOLO con alergia (Escenario 5: Huevo y Lácteos, sin intolerancia)
+-- Fijo (Comedor=TRUE) SOLO con alergia (Escenario 5: Huevo y Lácteos)
 ('Luis', 'Martínez Ruiz', '22222222B', 2, TRUE),
 
--- Fijo (Comedor=TRUE) SOLO con intolerancia (Gluten y Lactosa, sin alergia)
+-- Fijo (Comedor=TRUE) SOLO con intolerancia (Gluten y Lactosa)
 ('Carla', 'López Sanz', '33333333C', 3, TRUE),
 
 -- Fijo (Comedor=TRUE) con AMBAS (varias marcas a TRUE en alergia e intolerancia)
@@ -153,8 +153,8 @@ INSERT INTO Alergia (Huevo, Lacteos, Frutos_secos, Pescado, dni) VALUES
 -- ============================================================================
 -- 4. MENÚS (Semana completa del lunes 16/11/2026 al viernes 20/11/2026)
 -- ============================================================================
--- OID_MD = 1 (Lunes 16/11): Cubre menú sin gluten
 INSERT INTO Menus (FechaHoy, Postre, Clase, primer_plato, segundo_plato, primer_plato_especial, segundo_plato_especial) VALUES
+-- OID_MD = 1 (Lunes 16/11): Cubre menú sin gluten
 ('2026-11-16', 'Manzana', 1, 'Macarrones con tomate', 'Filete de pollo', 'Macarrones sin gluten', 'Filete de pollo a la plancha'),
 
 -- OID_MD = 2 (Martes 17/11): Cubre menú sin huevo ni lácteos (Escenario 5 para Luis)
@@ -171,30 +171,29 @@ INSERT INTO Menus (FechaHoy, Postre, Clase, primer_plato, segundo_plato, primer_
 
 
 -- ============================================================================
--- 5. ASISTENCIAS (Cubre todos los casos de asistencia, faltas y días completos)
+-- 5. ASISTENCIAS (Adaptadas al trigger RN-05 con la columna FichaLeida)
 -- ============================================================================
-INSERT INTO Asistencia (FechaHoy, Asiste, dni, OID_Menu) VALUES
+INSERT INTO Asistencia (FechaHoy, Asiste, FichaLeida, dni, OID_Menu) VALUES
 -- LUNES 16/11/2026 (Menú 1 - Sin gluten):
-('2026-11-16', TRUE, '11111111A', 1),  -- Ana (fija sin restricciones) asiste
-('2026-11-16', TRUE, '33333333C', 1),  -- Carla (celíaca) asiste y aprovecha menú sin gluten
-('2026-11-16', FALSE, '55555555E', 1), -- Elena (fija) falta este día (Asiste = FALSE)
+('2026-11-16', TRUE, FALSE, '11111111A', 1),  -- Ana (sin restricciones, no exige FichaLeida=TRUE)
+('2026-11-16', TRUE, TRUE,  '33333333C', 1),  -- Carla (celíaca -> FichaLeida=TRUE obligatorio por RN-05)
+('2026-11-16', FALSE, FALSE,'55555555E', 1),  -- Elena (falta -> Asiste=FALSE, pasa el trigger)
 
 -- MARTES 17/11/2026 (Menú 2 - Sin huevo y sin lácteos - Escenario 5):
-('2026-11-17', TRUE, '22222222B', 2),  -- Luis (alergia huevo y lácteos) ligado al menú especial 2
-('2026-11-17', TRUE, '11111111A', 2),  -- Ana asiste
--- Nota: Elena ('55555555E') NO tiene registro este día (caso: alumno fijo sin registro ese día)
+('2026-11-17', TRUE, TRUE,  '22222222B', 2),  -- Luis (alergia huevo/lácteos -> FichaLeida=TRUE obligatorio por RN-05)
+('2026-11-17', TRUE, FALSE, '11111111A', 2),  -- Ana asiste
 
 -- MIÉRCOLES 18/11/2026 (Menú 3 - Sin frutos secos ni pescado):
-('2026-11-18', TRUE, '44444444D', 3),  -- Diego (alergia frutos secos/pescado + intolerancias)
-('2026-11-18', TRUE, '66666666F', 3),  -- Marco (Comedor = FALSE) asiste este día puntual
+('2026-11-18', TRUE, TRUE,  '44444444D', 3),  -- Diego (alergias + intolerancias -> FichaLeida=TRUE obligatorio por RN-05)
+('2026-11-18', TRUE, FALSE, '66666666F', 3),  -- Marco (ocasional sin restricciones) asiste
 
 -- JUEVES 19/11/2026 (Menú 4 - Sin menú especial):
-('2026-11-19', TRUE, '11111111A', 4),  -- Ana (sin restricciones) asiste al menú normal
-('2026-11-19', TRUE, '55555555E', 4),  -- Elena asiste
+('2026-11-19', TRUE, FALSE, '11111111A', 4),  -- Ana asiste
+('2026-11-19', TRUE, FALSE, '55555555E', 4),  -- Elena asiste
 
 -- VIERNES 20/11/2026 (Menú 5 - Fin de semana escolar):
-('2026-11-20', TRUE, '11111111A', 5),
-('2026-11-20', TRUE, '22222222B', 5),
-('2026-11-20', TRUE, '33333333C', 5),
-('2026-11-20', TRUE, '44444444D', 5),
-('2026-11-20', TRUE, '55555555E', 5);
+('2026-11-20', TRUE, FALSE, '11111111A', 5),  -- Ana (sin restricciones)
+('2026-11-20', TRUE, TRUE,  '22222222B', 5),  -- Luis (con restricciones -> FichaLeida=TRUE)
+('2026-11-20', TRUE, TRUE,  '33333333C', 5),  -- Carla (con restricciones -> FichaLeida=TRUE)
+('2026-11-20', TRUE, TRUE,  '44444444D', 5),  -- Diego (con restricciones -> FichaLeida=TRUE)
+('2026-11-20', TRUE, FALSE, '55555555E', 5);  -- Elena (sin restricciones)
