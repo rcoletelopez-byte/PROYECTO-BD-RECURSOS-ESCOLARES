@@ -1,19 +1,9 @@
+USE sigre;
+
 DROP TABLE IF EXISTS asistencias;
 DROP TABLE IF EXISTS alergias;
 DROP TABLE IF EXISTS intolerancias;
 DROP TABLE IF EXISTS menus;
-DROP TABLE IF EXISTS alumnos;
-
-
-CREATE TABLE alumnos
-(	nombre VARCHAR(50) NOT NULL,
-	apellidos VARCHAR(50) NOT NULL,
-	dni CHAR(9) PRIMARY KEY,
-	curso TINYINT,
-	comedor BOOLEAN DEFAULT FALSE,
-	CONSTRAINT uq_dni_alumno UNIQUE (dni),
-	CONSTRAINT chk_curso_alumno_psotivo CHECK (curso > 0)
-);
 
 CREATE TABLE menus
 (	oidM SMALLINT PRIMARY KEY AUTO_INCREMENT,
@@ -76,7 +66,7 @@ CREATE TABLE alergias
 DELIMITER //
 
 -- Validación al insertar una nueva asistencia
-CREATE TRIGGER trg_rn05_validar_asistencia_insert
+CREATE TRIGGER t_validar_asistencia_insert
 BEFORE INSERT ON asistencias
 FOR EACH ROW
 BEGIN
@@ -95,7 +85,7 @@ BEGIN
 END//
 
 -- Validación al actualizar una asistencia existente (ej. paso de lista)
-CREATE TRIGGER trg_rn05_validar_asistencia_update
+CREATE TRIGGER t_validar_asistencia_update
 BEFORE UPDATE ON asistencias
 FOR EACH ROW
 BEGIN
@@ -118,16 +108,6 @@ DELIMITER ;
 
 
 
-INSERT INTO alumnos (nombre, apellidos, dni, curso, comedor) VALUES
-('Lucía',  'García López',     '12345678A', 2, TRUE),
-('Mateo',  'Martínez Ruiz',    '23456789B', 3, TRUE),
-('Sofía',  'Sánchez Pérez',    '34567890C', 1, TRUE),
-('Hugo',   'Fernández Gómez',  '45678901D', 4, FALSE),
-('Daniela','Jiménez Díaz',     '56789012E', 2, TRUE),
-('Pablo',  'Moreno Álvarez',   '67890123F', 5, TRUE),
-('Carmen', 'Navarro Torres',   '39482015L', 3, TRUE),
-('Álvaro', 'Romero Castillo',  '77975237R', 1, FALSE),
-('Elena',  'Ortega Morales',   '72940183F', 6, TRUE);
 
 INSERT INTO intolerancias (lactosa, gluten, fructosa, dni) VALUES
 (TRUE,  FALSE, FALSE, '12345678A'),
