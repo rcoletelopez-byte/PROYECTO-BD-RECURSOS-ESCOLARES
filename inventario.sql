@@ -6,7 +6,6 @@ DROP TABLE IF EXISTS proveedores;
 DROP TABLE IF EXISTS articulos;
 
 
--- Creacion de tablas
 CREATE TABLE articulos (
     oidAr SMALLINT PRIMARY KEY AUTO_INCREMENT,
     nombre VARCHAR(60) NOT NULL UNIQUE,
@@ -74,7 +73,7 @@ BEGIN
 END //
 
 -- RC-03.2: no se puede sacar o dar de baja más stock del disponible
-CREATE TRIGGER trgMovimientosStockBi
+CREATE TRIGGER tMovimientosStockBi
 BEFORE INSERT ON movimientosStock
 FOR EACH ROW
 BEGIN
@@ -87,37 +86,6 @@ BEGIN
 
         IF NEW.cantidad > vStock THEN
             SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock insuficiente para realizar el movimiento';
-        END IF;
-    END IF;
-END //
-
--- RC-03.2 + RN-04 + RG-03: actualiza stock tras un movimiento y avisa si queda bajo mínimos o sin stock
-CREATE TRIGGER trgMovimientosStockAi
-AFTER INSERT ON movimientosStock
-FOR EACH ROW
-BEGIN
-    DECLARE vEstado VARCHAR(30);
-
-    IF NEW.tipoMvto = 'Entrada' THEN
-        UPDATE articulos
-           SET stockActual = stockActual + NEW.cantidad
-         WHERE oidAr = NEW.oidAr;
-
-    ELSEIF NEW.tipoMvto IN ('Salida', 'Baja') THEN
-        UPDATE articulos
-           SET stockActual = stockActual - NEW.cantidad
-         WHERE oidAr = NEW.oidAr;
-
-        SELECT estadoArticulo INTO vEstado
-          FROM articulos
-         WHERE oidAr = NEW.oidAr;
-
-        IF vEstado = 'Sin Unidades' THEN
-            INSERT INTO avisos (fecha, tipo, panel, mensaje)
-            VALUES (NEW.fecha, 'SinStock', 'Direccion', 'Artículo sin unidades disponibles');
-        ELSEIF vEstado = 'Requiere Reposicion' THEN
-            INSERT INTO avisos (fecha, tipo, panel, mensaje)
-            VALUES (NEW.fecha, 'StockBajo', 'Direccion', 'Artículo por debajo del stock mínimo');
         END IF;
     END IF;
 END //
