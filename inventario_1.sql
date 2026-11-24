@@ -25,6 +25,7 @@ CREATE TABLE articulos (
     stockMinimo INT NOT NULL,
     ubicacion VARCHAR(40) NOT NULL,
     estadoArticulo ENUM('Requiere Reposicion', 'Cantidad Adecuada', 'Sin Unidades') NOT NULL DEFAULT 'Sin Unidades',
+    -- hay que ponerle los nombres antiguos a los CHECKS
     CHECK (stockActual >= 0),
     CHECK (stockMinimo >= 0),
     CHECK (
