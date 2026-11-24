@@ -14,58 +14,60 @@ DROP TABLE if EXISTS alumnos;
 
 CREATE TABLE alumnos(
 dni VARCHAR(40) PRIMARY KEY,
-nombre VARCHAR(30),
+nombre VARCHAR(30) NOT NULL,
 apellidos VARCHAR(50),
 curso INT,
-comedor BOOLEAN
+comedor BOOLEAN DEFAULT FALSE
 );
 
 CREATE TABLE libros(
-OID_L  INT AUTO_INCREMENT PRIMARY KEY, 
+OID_L SMALLINT AUTO_INCREMENT PRIMARY KEY, 
 titulo VARCHAR(40),
 editorial VARCHAR(40),
 genero VARCHAR(30),
-es_lectura_obligatoria BOOLEAN
+es_lectura_obligatoria BOOLEAN DEFAULT FALSE
 );
 
 CREATE TABLE ejemplares(
-OID_E INT AUTO_INCREMENT PRIMARY KEY,
+OID_E SMALLINT AUTO_INCREMENT PRIMARY KEY,
 codigo INT UNIQUE,
 estado_conservacion VARCHAR(40),
 disponibilidad BOOLEAN,
-OID_L INT,
-FOREIGN KEY (OID_L) REFERENCES libros(OID_L)
+OID_L SMALLINT,
+FOREIGN KEY (OID_L) REFERENCES libros(OID_L) ON UPDATE CASCADE 
 );
 
 CREATE TABLE prestamos(
-OID_P INT AUTO_INCREMENT PRIMARY KEY, 
-fecha_inicio DATE,
+OID_P SMALLINT AUTO_INCREMENT PRIMARY KEY, 
+fecha_inicio DATE DEFAULT SYSDATE(),
 fecha_limite DATE,
-fecha_devolucion DATE,
+fecha_devolucion DATE DEFAULT NULL,
 dni VARCHAR (40),
-OID_E INT,
+OID_E SMALLINT,
 FOREIGN KEY (dni) REFERENCES alumnos(dni),
-FOREIGN KEY (OID_E) REFERENCES ejemplares(OID_E)
+FOREIGN KEY (OID_E) REFERENCES ejemplares(OID_E) ON UPDATE CASCADE,
+CONSTRAINT fechasValidas CHECK (fecha_inicio < fecha_limite)
 );
 
 
 CREATE TABLE incidencias(
-OID_I INT AUTO_INCREMENT PRIMARY KEY,
-descripcion_desperfecto ENUM ("Páginas pintadas","Páginas arrancadas", "Libro mojado"),
-gravedad ENUM ("Leve", "Media", "Alta"),
-OID_P INT,
-FOREIGN KEY (OID_P) REFERENCES prestamos(OID_P)
+OID_I SMALLINT AUTO_INCREMENT PRIMARY KEY,
+descripcion_desperfecto ENUM ('Páginas pintadas','Páginas arrancadas', 'Libro mojado'),
+gravedad ENUM ('Leve', 'Media', 'Alta'),
+OID_P SMALLINT,
+FOREIGN KEY (OID_P) REFERENCES prestamos(OID_P) ON UPDATE CASCADE 
 );
 
 CREATE TABLE reservas(
-OID_R INT AUTO_INCREMENT PRIMARY KEY,
-fecha_solicitud DATE, 
+OID_R SMALLINT AUTO_INCREMENT PRIMARY KEY,
+fecha_solicitud DATE DEFAULT SYSDATE(), 
 orden_prioridad INT, 
 estado_reserva VARCHAR(30),
 dni VARCHAR(40),
-OID_L INT,
+OID_L SMALLINT,
 FOREIGN KEY (dni) REFERENCES alumnos(dni),
-FOREIGN KEY (OID_L) REFERENCES libros(OID_L)
+FOREIGN KEY (OID_L) REFERENCES libros(OID_L) ON UPDATE CASCADE,
+CONSTRAINT ordenPositivo CHECK orden_prioridad >= 0
 );
 
 -- Poblamos las tablas 
