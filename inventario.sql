@@ -9,13 +9,13 @@ CREATE TABLE Articulos
 (	OID_AR SMALLINT PRIMARY KEY AUTO_INCREMENT,
 	nombre VARCHAR(60) NOT NULL UNIQUE,
 	categoria ENUM('Aula', 'Deporte', 'Fiestas', 'Laboratorio') NOT NULL,
-	stock_actual INT NOT NULL,
+	stock_actual INT NOT NULL DEFAULT 0,
 	stock_minimo INT NOT NULL,
 	ubicacion VARCHAR(40) NOT NULL,
 	estado_articulo ENUM('Requiere Reposicion', 'Cantidad Adecuada', 'Sin Unidades') NOT NULL,
-	CHECK (stock_actual >= 0),
-	CHECK (stock_minimo >= 0),
-	CHECK (
+	CONSTRAINT stockActualPositivo CHECK (stock_actual >= 0),
+	CONSTRAINT stockMinimoPositivo CHECK (stock_minimo >= 0),
+	CONSTRAINT estadoAdecuadoStock CHECK (
 		(stock_actual = 0 AND estado_articulo = 'Sin Unidades')
 		OR (stock_actual > 0 AND stock_actual <= stock_minimo AND estado_articulo = 'Requiere Reposicion')
 		OR (stock_actual > stock_minimo AND estado_articulo = 'Cantidad Adecuada')
@@ -23,13 +23,13 @@ CREATE TABLE Articulos
 );
 
 CREATE TABLE MovimientosStock
-(	OID_MS INT PRIMARY KEY AUTO_INCREMENT,
+(	OID_MS SMALLINT PRIMARY KEY AUTO_INCREMENT,
 	fecha DATE NOT NULL,
 	tipo_mvto ENUM('Entrada', 'Salida', 'Transferencia', 'Baja') NOT NULL,
 	cantidad INT NOT NULL,
 	motivo VARCHAR(80) NOT NULL,
 	OID_AR SMALLINT NOT NULL,
-	CHECK (cantidad > 0),
+	CONSTRAINT cantidadPositiva CHECK (cantidad > 0),
 	FOREIGN KEY (OID_AR) REFERENCES Articulos (OID_AR)
 );
 
@@ -41,14 +41,14 @@ CREATE TABLE Proveedores
 );
 
 CREATE TABLE PedidosCompra
-(	OID_PC INT PRIMARY KEY AUTO_INCREMENT,
-	fecha_pedido DATE NOT NULL,
+(	OID_PC SMALLINT PRIMARY KEY AUTO_INCREMENT,
+	fecha_pedido DATE NOT NULL DEFAULT SYSDATE(),
 	unidades INT NOT NULL,
 	precio DECIMAL(8,2) NOT NULL,   -- importe total del pedido
 	OID_AR SMALLINT NOT NULL,
 	OID_PR SMALLINT NOT NULL,
-	CHECK (unidades > 0),
-	CHECK (precio >= 0),
+	CONSTRAINT unidadesPositivas CHECK (unidades > 0),
+	CONSTRAINT precioPositivo CHECK (precio >= 0),
 	FOREIGN KEY (OID_AR) REFERENCES Articulos (OID_AR),
 	FOREIGN KEY (OID_PR) REFERENCES Proveedores (OID_PR)
 );
