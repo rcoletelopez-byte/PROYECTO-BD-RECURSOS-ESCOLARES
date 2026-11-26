@@ -1,4 +1,4 @@
-USE sigre;
+
 
 DROP TABLE IF EXISTS movimientosStock;
 DROP TABLE IF EXISTS pedidosCompra;
@@ -59,18 +59,23 @@ CREATE TABLE pedidosCompra (
 DELIMITER //
 
 -- RN-04: recalcula el estado del artículo cada vez que cambia su stock o su mínimo
-CREATE TRIGGER trgArticulosBu
+
+CREATE TRIGGER tArticulosBu
 BEFORE UPDATE ON articulos
 FOR EACH ROW
 BEGIN
     IF NEW.stockActual = 0 THEN
         SET NEW.estadoArticulo = 'Sin Unidades';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Sin unidades';
     ELSEIF NEW.stockActual <= NEW.stockMinimo THEN
         SET NEW.estadoArticulo = 'Requiere Reposicion';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Requiere reposición';
     ELSE
         SET NEW.estadoArticulo = 'Cantidad Adecuada';
     END IF;
 END //
+
+
 
 -- RC-03.2: no se puede sacar o dar de baja más stock del disponible
 CREATE TRIGGER tMovimientosStockBi
