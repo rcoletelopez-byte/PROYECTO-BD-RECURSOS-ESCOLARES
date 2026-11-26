@@ -96,30 +96,21 @@ END //
 DELIMITER ;
 
 DELIMITER //
-CREATE OR REPLACE TRIGGER tReservasBi BEFORE INSERT ON reservas
+CREATE OR REPLACE TRIGGER tEjemplaresBu
+BEFORE UPDATE ON ejemplares
 FOR EACH ROW
 BEGIN
-    DECLARE vDisponibles INT DEFAULT 0;
-    DECLARE vDuplicadas INT DEFAULT 0;
-
-    IF NEW.estadoReserva = 'Pendiente' THEN
-        SELECT COUNT(*) INTO vDisponibles FROM ejemplares
-         WHERE oidL = NEW.oidL AND disponibilidad = TRUE;
-        IF vDisponibles > 0 THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'RI-02.4: el libro tiene ejemplares disponibles, solo se reservan los agotados';
-        END IF;
-
-        SELECT COUNT(*) INTO vDuplicadas FROM reservas
-         WHERE dni = NEW.dni AND oidL = NEW.oidL AND estadoReserva IN ('Pendiente', 'Notificada');
-        IF vDuplicadas > 0 THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El alumno ya tiene una reserva activa de este libro';
+    IF NEW.estadoConservacion = 'Deteriorado' AND OLD.estadoConservacion <> 'Deteriorado' THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM incidencias
+            WHERE oidP = (SELECT MAX(oidP) FROM prestamos WHERE oidE = NEW.oidE)
+        ) THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'RN-02: para marcar un ejemplar como deteriorado hay que registrar la incidencia';
         END IF;
     END IF;
-
-    IF NEW.ordenPrioridad = 0 THEN
-        SET NEW.ordenPrioridad = (SELECT IFNULL(MAX(ordenPrioridad), 0) + 1 FROM reservas WHERE oidL = NEW.oidL);
-    END IF;
-END // 
+END //
 DELIMITER ;
 
 	
