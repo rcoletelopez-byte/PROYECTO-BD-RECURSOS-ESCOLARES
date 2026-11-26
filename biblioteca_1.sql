@@ -362,3 +362,16 @@ INSERT INTO reservas (fechaSolicitud, ordenPrioridad, estadoReserva, dni, oidL) 
 --
 -- RI-02.4: reservar un libro con ejemplares disponibles (El Hobbit) -> ERROR
 -- INSERT INTO reservas (fechaSolicitud, dni, oidL) VALUES ('2026-11-12', '77975237R', 6);
+
+
+CREATE OR REPLACE VIEW vbiblioteca
+AS 
+SELECT * FROM alumnos NATURAL JOIN prestamos NATURAL JOIN ejemplares NATURAL JOIN incidencias NATURAL JOIN reservas;
+
+CREATE OR REPLACE VIEW vcomedor
+AS 
+SELECT * FROM alumnos NATURAL JOIN intolerancias NATURAL JOIN alergias NATURAL JOIN asistencias NATURAL JOIN menu;
+
+CREATE OR REPLACE VIEW vinventario
+AS 
+SELECT * FROM articulos NATURAL JOIN movimientosStock NATURAL JOIN pedidosCompra NATURAL JOIN proveedores;
