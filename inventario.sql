@@ -1,5 +1,3 @@
-
-
 DROP TABLE IF EXISTS movimientosStock;
 DROP TABLE IF EXISTS pedidosCompra;
 DROP TABLE IF EXISTS proveedores;
@@ -56,33 +54,52 @@ CREATE TABLE pedidosCompra (
 );
 
 -- Triggers
-DELIMITER //
 
 -- RN-04: recalcula el estado del artículo cada vez que cambia su stock o su mínimo
-
+-- y deja en @alertaStock el aviso para Dirección cuando el artículo
+-- PASA a 'Sin Unidades' (SinStock) o a 'Requiere Reposicion' (StockBajo).
+DELIMITER //
 CREATE TRIGGER tArticulosBu
 BEFORE UPDATE ON articulos
 FOR EACH ROW
 BEGIN
-    IF NEW.stockActual = 0 THEN
-        SET NEW.estadoArticulo = 'Sin Unidades';
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Sin unidades';
-    ELSEIF NEW.stockActual <= NEW.stockMinimo THEN
-        SET NEW.estadoArticulo = 'Requiere Reposicion';
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Requiere reposición';
-    ELSE
-        SET NEW.estadoArticulo = 'Cantidad Adecuada';
-    END IF;
-END //
+    DECLARE vEstadoAnterior VARCHAR(30);
 
+    -- cada actualización empieza sin aviso; solo se rellena si hay cambio de estado
+    SET @alertaStock = NULL;
+    SET vEstadoAnterior = OLD.estadoArticulo;
+
+    SET NEW.estadoArticulo = CASE
+        WHEN NEW.stockActual = 0 THEN 'Sin Unidades'
+        WHEN NEW.stockActual <= NEW.stockMinimo THEN 'Requiere Reposicion'
+        ELSE 'Cantidad Adecuada'
+    END;
+
+    IF NEW.estadoArticulo <> vEstadoAnterior THEN
+        IF NEW.estadoArticulo = 'Sin Unidades' THEN
+            SET @alertaStock = CONCAT('SinStock: ', NEW.nombre, ' se ha quedado sin unidades');
+        ELSEIF NEW.estadoArticulo = 'Requiere Reposicion' THEN
+            SET @alertaStock = CONCAT('StockBajo: ', NEW.nombre, ' requiere reposicion (quedan ',
+                                      NEW.stockActual, ', minimo ', NEW.stockMinimo, ')');
+        ELSE
+            SET @alertaStock = NULL;
+        END IF;
+    END IF;
+END//
+DELIMITER ;
 
 
 -- RC-03.2: no se puede sacar o dar de baja más stock del disponible
+-- (solo valida; no modifica nada antes de que el movimiento se haya aceptado)
+DELIMITER //
 CREATE TRIGGER tMovimientosStockBi
 BEFORE INSERT ON movimientosStock
 FOR EACH ROW
 BEGIN
     DECLARE vStock INT DEFAULT 0;
+
+    -- cada movimiento empieza sin aviso
+    SET @alertaStock = NULL;
 
     IF NEW.tipoMvto IN ('Salida', 'Baja') THEN
         SELECT stockActual INTO vStock
@@ -93,9 +110,36 @@ BEGIN
             SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock insuficiente para realizar el movimiento';
         END IF;
     END IF;
-END //
-
+END//
 DELIMITER ;
+
+
+-- Aplica el movimiento al stock una vez insertado: Entrada suma; Salida y Baja
+-- restan; Transferencia no cambia el stock. El UPDATE dispara tArticulosBu,
+-- que recalcula el estado y genera el aviso.
+DELIMITER //
+CREATE TRIGGER tMovimientosStockAi
+AFTER INSERT ON movimientosStock
+FOR EACH ROW
+BEGIN
+    DECLARE vDelta INT DEFAULT 0;
+
+    SET vDelta = CASE NEW.tipoMvto
+        WHEN 'Entrada' THEN NEW.cantidad
+        WHEN 'Salida'  THEN -NEW.cantidad
+        WHEN 'Baja'    THEN -NEW.cantidad
+        ELSE 0
+    END;
+
+    IF vDelta <> 0 THEN
+        UPDATE articulos
+           SET stockActual = stockActual + vDelta
+         WHERE oidAr = NEW.oidAr;
+    END IF;
+END//
+DELIMITER ;
+
+SET @alertaStock = NULL;
 
 
 -- Poblacion: Articulos
@@ -220,14 +264,95 @@ INSERT INTO pedidosCompra (oidPc, fechaPedido, unidades, precio, oidAr, oidPr) V
 (9,  '2026-09-02', 6,  540.00, 13, 3),  -- pedido de mayor importe
 (10, '2026-09-02', 20, 60.00,  14, 3);
 
--- ---------------------------------------------------------------------
+-- Comprobacion tras cargar
+SHOW TRIGGERS;
+SELECT @alertaStock AS ultimaAlertaTrasCarga;
+SELECT oidAr, nombre, stockActual, estadoArticulo FROM articulos;
+
 -- Pruebas (ejecutar a mano)
--- ---------------------------------------------------------------------
 -- RC-03.2: sacar más unidades de las que hay (tizas tiene 0) -> ERROR
 -- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Salida', 1, 'Prueba', 7);
--- RN-04: llevar las cuerdas a 0 -> estado 'Sin Unidades' y aviso 'SinStock'
+-- RN-04: llevar las cuerdas a 0 -> estado 'Sin Unidades' y mostrar alerta 'SinStock'
 -- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Baja', 3, 'Prueba', 3);
+-- SELECT @alertaStock AS alerta;
+-- RN-04: folios (stock 40, mínimo 15): sacar 20 -> queda 20, 'Cantidad Adecuada' y sin alerta;
+-- sacar 5 más -> queda 15 (<= mínimo), pasa a 'Requiere Reposicion' y alerta 'StockBajo'
+-- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Salida', 20, 'Prueba', 4);
+-- SELECT @alertaStock AS alerta;
+-- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Salida', 5, 'Prueba', 4);
+-- SELECT @alertaStock AS alerta;
 -- Subir el mínimo de las probetas a 20 -> pasa solo a 'Requiere Reposicion'
 -- UPDATE articulos SET stockMinimo = 20 WHERE oidAr = 14;
--- Comprobación: el stock de cada artículo debe coincidir con los comentarios de arriba
--- SELECT oidAr, nombre, stockActual, estadoArticulo FROM articulos;
+
+
+
+-- Consultas SQL
+
+-- CONSULTA 1: Artículos que necesitan reposición
+-- Nos indica lo que está bajo mínimos y cuántas unidades faltan para llegar al mínimo.
+SELECT nombre, ubicacion, stockActual, stockMinimo,
+       stockMinimo - stockActual AS unidadesHastaMinimo,
+       estadoArticulo
+  FROM articulos
+ WHERE estadoArticulo <> 'Cantidad Adecuada'
+ ORDER BY unidadesHastaMinimo DESC;
+
+
+-- CONSULTA 2: Resumen por categoría (agregación)
+-- Cuenta artículos, suma unidades y calcula cuántos están en problemas en cada categoría.
+SELECT categoria,
+       COUNT(*) AS numArticulos,
+       SUM(stockActual) AS unidadesTotales,
+       SUM(estadoArticulo = 'Requiere Reposicion') AS requierenReposicion,
+       SUM(estadoArticulo = 'Sin Unidades') AS sinUnidades,
+       ROUND(100 * SUM(estadoArticulo <> 'Cantidad Adecuada') / COUNT(*), 1) AS pctProblemas
+  FROM articulos
+ GROUP BY categoria
+ ORDER BY pctProblemas DESC;
+
+
+-- CONSULTA 3: Gasto por proveedor, incluidos los que no tienen pedidos (lo hacemos con LEFT JOIN)
+SELECT p.nombre AS proveedor,
+       COUNT(pc.oidPc) AS numPedidos,
+       IFNULL(SUM(pc.precio), 0) AS gastoTotal,
+       IFNULL(SUM(pc.unidades), 0) AS unidadesPedidas,
+       IFNULL(ROUND(SUM(pc.precio) / NULLIF(SUM(pc.unidades), 0), 2), 0.00) AS precioMedioUnidad
+  FROM proveedores p
+  LEFT JOIN pedidosCompra pc ON pc.oidPr = p.oidPr
+ GROUP BY p.oidPr, p.nombre
+ ORDER BY gastoTotal DESC;
+
+
+-- CONSULTA 4: Artículos bajo mínimos con o sin pedido en curso
+-- Considera que hay un pedido pendiente si el último pedido es posterior a la última Entrada de stock.
+SELECT a.nombre, a.stockActual, a.stockMinimo,
+       ped.ultimoPedido,
+       ent.ultimaEntrada,
+       CASE
+           WHEN ped.ultimoPedido IS NULL THEN 'SIN PEDIDO: hay que pedir'
+           WHEN ent.ultimaEntrada IS NULL OR ped.ultimoPedido > ent.ultimaEntrada
+                THEN 'Pedido pendiente de recibir'
+           ELSE 'Pedido ya recibido, sigue bajo mínimos'
+       END AS situacion
+  FROM articulos a
+  LEFT JOIN (SELECT oidAr, MAX(fechaPedido) AS ultimoPedido
+               FROM pedidosCompra GROUP BY oidAr) ped ON ped.oidAr = a.oidAr
+  LEFT JOIN (SELECT oidAr, MAX(fecha) AS ultimaEntrada
+               FROM movimientosStock WHERE tipoMvto = 'Entrada' GROUP BY oidAr) ent
+         ON ent.oidAr = a.oidAr
+ WHERE a.stockActual <= a.stockMinimo
+ ORDER BY (ped.ultimoPedido IS NULL) DESC, a.nombre;
+
+
+-- CONSULTA 5: stock guardado vs. stock recalculado <- ¡MUY CURIOSA PARA ENSEÑAR EN LA DEFENSA!
+-- Como el stock lo mantienen los triggers, esta consulta recalcula el stock desde el histórico de movimientos 
+-- y detecta incoherencias. Si todo está bien, no devuelve filas.
+SELECT a.oidAr, a.nombre, a.stockActual AS stockGuardado,
+       IFNULL(SUM(CASE m.tipoMvto 
+                    WHEN 'Entrada' THEN  m.cantidad
+                    WHEN 'Salida'  THEN -m.cantidad
+                    WHEN 'Baja'    THEN -m.cantidad
+                    ELSE 0
+                  END), 0) AS stockRecalculado
+  FROM articulos a LEFT JOIN movimientosStock m ON m.oidAr = a.oidAr
+ GROUP BY a.oidAr, a.nombre, a.stockActual HAVING stockGuardado <> stockRecalculado;
