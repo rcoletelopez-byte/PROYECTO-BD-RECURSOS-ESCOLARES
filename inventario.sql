@@ -267,7 +267,7 @@ SELECT oidAr, nombre, stockActual, estadoArticulo FROM articulos;
 -- Pruebas (ejecutar a mano)
 -- RC-03.2: sacar más unidades de las que hay (tizas tiene 0) -> ERROR
 -- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Salida', 1, 'Prueba', 7);
--- RN-04: llevar las cuerdas a 0 -> estado 'Sin Unidades' y mostrar alerta 'SinStock'
+-- RN-04: llevar las cuerdas a 0 -> estado 'Sin Unidades' y aviso 'SinStock'
 -- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Baja', 3, 'Prueba', 3);
 -- Subir el mínimo de las probetas a 20 -> pasa solo a 'Requiere Reposicion'
 -- UPDATE articulos SET stockMinimo = 20 WHERE oidAr = 14;
