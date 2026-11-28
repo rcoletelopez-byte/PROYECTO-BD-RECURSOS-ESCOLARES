@@ -63,27 +63,14 @@ CREATE TRIGGER tArticulosBu
 BEFORE UPDATE ON articulos
 FOR EACH ROW
 BEGIN
-    DECLARE vEstadoAnterior VARCHAR(30);
-
-    -- cada actualización empieza sin aviso; solo se rellena si hay cambio de estado
-    SET @alertaStock = NULL;
-    SET vEstadoAnterior = OLD.estadoArticulo;
-
-    SET NEW.estadoArticulo = CASE
-        WHEN NEW.stockActual = 0 THEN 'Sin Unidades'
-        WHEN NEW.stockActual <= NEW.stockMinimo THEN 'Requiere Reposicion'
-        ELSE 'Cantidad Adecuada'
-    END;
-
-    IF NEW.estadoArticulo <> vEstadoAnterior THEN
-        IF NEW.estadoArticulo = 'Sin Unidades' THEN
-            SET @alertaStock = CONCAT('SinStock: ', NEW.nombre, ' se ha quedado sin unidades');
-        ELSEIF NEW.estadoArticulo = 'Requiere Reposicion' THEN
-            SET @alertaStock = CONCAT('StockBajo: ', NEW.nombre, ' requiere reposicion (quedan ',
-                                      NEW.stockActual, ', minimo ', NEW.stockMinimo, ')');
-        ELSE
-            SET @alertaStock = NULL;
-        END IF;
+    IF NEW.stockActual = 0 THEN
+        SET NEW.estadoArticulo = 'Sin Unidades';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Sin unidades';
+    ELSEIF NEW.stockActual <= NEW.stockMinimo THEN
+        SET NEW.estadoArticulo = 'Requiere Reposicion';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Requiere reposición';
+    ELSE
+        SET NEW.estadoArticulo = 'Cantidad Adecuada';
     END IF;
 END//
 DELIMITER ;
@@ -98,17 +85,25 @@ FOR EACH ROW
 BEGIN
     DECLARE vStock INT DEFAULT 0;
 
-    -- cada movimiento empieza sin aviso
-    SET @alertaStock = NULL;
+    SELECT stockActual INTO vStock
+      FROM articulos
+     WHERE oidAr = NEW.oidAr;
 
-    IF NEW.tipoMvto IN ('Salida', 'Baja') THEN
-        SELECT stockActual INTO vStock
-          FROM articulos
+    IF NEW.tipoMvto IN ('Salida', 'Baja') AND NEW.cantidad > vStock THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock insuficiente para realizar el movimiento';
+    END IF;
+
+    SET vDelta = CASE NEW.tipoMvto
+        WHEN 'Entrada' THEN NEW.cantidad
+        WHEN 'Salida'  THEN -NEW.cantidad
+        WHEN 'Baja'    THEN -NEW.cantidad
+        ELSE 0
+    END;
+
+    IF vDelta <> 0 THEN
+        UPDATE articulos
+           SET stockActual = vStock + vDelta
          WHERE oidAr = NEW.oidAr;
-
-        IF NEW.cantidad > vStock THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock insuficiente para realizar el movimiento';
-        END IF;
     END IF;
 END//
 DELIMITER ;
@@ -274,13 +269,6 @@ SELECT oidAr, nombre, stockActual, estadoArticulo FROM articulos;
 -- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Salida', 1, 'Prueba', 7);
 -- RN-04: llevar las cuerdas a 0 -> estado 'Sin Unidades' y mostrar alerta 'SinStock'
 -- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Baja', 3, 'Prueba', 3);
--- SELECT @alertaStock AS alerta;
--- RN-04: folios (stock 40, mínimo 15): sacar 20 -> queda 20, 'Cantidad Adecuada' y sin alerta;
--- sacar 5 más -> queda 15 (<= mínimo), pasa a 'Requiere Reposicion' y alerta 'StockBajo'
--- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Salida', 20, 'Prueba', 4);
--- SELECT @alertaStock AS alerta;
--- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Salida', 5, 'Prueba', 4);
--- SELECT @alertaStock AS alerta;
 -- Subir el mínimo de las probetas a 20 -> pasa solo a 'Requiere Reposicion'
 -- UPDATE articulos SET stockMinimo = 20 WHERE oidAr = 14;
 
