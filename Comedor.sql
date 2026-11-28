@@ -1,9 +1,20 @@
-USE sigre;
 
 DROP TABLE IF EXISTS asistencias;
 DROP TABLE IF EXISTS alergias;
 DROP TABLE IF EXISTS intolerancias;
 DROP TABLE IF EXISTS menus;
+DROP TABLE if EXISTS alumnos;
+
+DROP PROCEDURE IF EXISTS pValidarAsistencia;
+
+CREATE TABLE alumnos (
+    dni CHAR(9) PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL,
+    apellidos VARCHAR(50) NOT NULL,
+    curso TINYINT NOT NULL,
+    comedor BOOLEAN NOT NULL DEFAULT FALSE,
+    CHECK (curso BETWEEN 1 AND 6)
+);
 
 CREATE TABLE menus
 (	oidM SMALLINT PRIMARY KEY AUTO_INCREMENT,
@@ -14,7 +25,6 @@ CREATE TABLE menus
    segundoPlato VARCHAR(60),
    primerPlatoEspecial VARCHAR(60),
    segundoPlatoEspecial VARCHAR(60),
-	CONSTRAINT chk_menus_clase_positivo CHECK (clase > 0),
 	CONSTRAINT uq_menu_clase UNIQUE (fecha, clase),
 	CONSTRAINT chk_platos_menu_segun_clase CHECK ((clase = 'Normal'
             AND primerPlato IS NOT NULL AND segundoPlato IS NOT NULL
@@ -32,9 +42,9 @@ CREATE TABLE asistencias
    fichaConfirmada BOOLEAN NOT NULL DEFAULT FALSE,
    dni CHAR(9) NOT NULL,
    oidM SMALLINT NOT NULL,
-	CONSTRAINT uq_asistencia_alumno FOREIGN KEY (dni) 
+	CONSTRAINT fk_asistencia_alumno FOREIGN KEY (dni) 
 	REFERENCES alumnos (dni) ON UPDATE CASCADE ON DELETE RESTRICT,
-	CONSTRAINT uq_asistencia_menus FOREIGN KEY (oidM) 
+	CONSTRAINT fk_asistencia_menus FOREIGN KEY (oidM) 
 	REFERENCES menus (oidM) ON UPDATE CASCADE ON DELETE RESTRICT,
 	CONSTRAINT uq_asistencia_alumno_menu UNIQUE (dni, oidM)
 );
@@ -44,7 +54,7 @@ CREATE TABLE intolerancias
     lactosa BOOLEAN NOT NULL DEFAULT FALSE,
     gluten BOOLEAN NOT NULL DEFAULT FALSE,
     fructosa BOOLEAN NOT NULL DEFAULT FALSE,
-    dni CHAR(9) NOT NULL UNIQUE,
+    dni CHAR(9) NOT NULL,
 	CONSTRAINT fk_intolerancia_alumno FOREIGN KEY (dni) 
    	REFERENCES alumnos (dni) ON UPDATE CASCADE ON DELETE CASCADE,
 	CONSTRAINT uq_dni_intolerancia UNIQUE (dni)
@@ -56,11 +66,59 @@ CREATE TABLE alergias
     lacteos BOOLEAN NOT NULL DEFAULT FALSE,
     frutosSecos BOOLEAN NOT NULL DEFAULT FALSE,
     pescado BOOLEAN NOT NULL DEFAULT FALSE,
-    dni CHAR(9) NOT NULL UNIQUE,
+    dni CHAR(9) NOT NULL,
 	CONSTRAINT fk_alergia_alumno FOREIGN KEY (dni)
    	REFERENCES alumnos (dni) ON UPDATE CASCADE ON DELETE CASCADE,
 	CONSTRAINT uq_dni_alergia UNIQUE (dni)
 );
+
+
+
+DELIMITER //
+CREATE PROCEDURE pValidarAsistencia(newAsiste BOOLEAN, newFichaConfirmada BOOLEAN, newDni CHAR(9), newOidAd SMALLINT, newOidM SMALLINT)
+	BEGIN 
+	DECLARE newTieneRestriccion BOOLEAN DEFAULT FALSE;
+	DECLARE newClase ENUM("Normal", "Especial");
+	DECLARE newFecha DATE;
+	
+	IF (newAsiste = TRUE) THEN
+			IF EXISTS (
+            SELECT 1 FROM alergias
+            WHERE dni = newDni AND (huevo = TRUE OR lacteos = TRUE OR frutosSecos = TRUE OR pescado = TRUE)
+        ) OR EXISTS (
+            SELECT 1 FROM intolerancias 
+            WHERE dni = newDni AND (lactosa = TRUE OR gluten = TRUE OR fructosa = TRUE)
+        ) THEN
+        		SET newTieneRestriccion = TRUE;
+			END IF;
+        
+   END IF;
+   
+   SELECT clase, fecha INTO newClase, newFecha FROM menus WHERE newOidM = oidM;
+   
+   IF (newTieneRestriccion = TRUE AND newFichaConfirmada = FALSE) 
+		THEN
+			SIGNAL SQLSTATE '45000'
+      	SET MESSAGE_TEXT = 'Error RN-05: Debe confirmar la lectura de la ficha de alergias/intolerancias antes de validar la asistencia.';
+	END IF;
+	IF (newTieneRestriccion = TRUE AND newClase <> "Especial") 
+		THEN
+			SIGNAL SQLSTATE '45000'
+      	SET MESSAGE_TEXT = 'Error: Un alumno con alergias o intolerancias debe tener asignado un menú Especial.';
+   END IF;
+   
+   IF EXISTS(
+   	SELECT 1 FROM asistencias A JOIN menus M ON A.oidM = M.oidM WHERE M.fecha = newFecha
+									AND A.dni = newDni AND (newOidAd <> A.oidAd OR newOidAd IS NULL))
+		THEN
+			SIGNAL SQLSTATE '45000'
+			SET MESSAGE_TEXT = 'Error: El alumno ya tiene un menú asignado para esa fecha.';
+   END IF;
+		
+END//
+
+DELIMITER ;
+
 
 
 DELIMITER //
@@ -70,18 +128,7 @@ CREATE TRIGGER t_validar_asistencia_insert
 BEFORE INSERT ON asistencias
 FOR EACH ROW
 BEGIN
-    IF NEW.asiste = TRUE AND NEW.fichaConfirmada = FALSE THEN
-        IF EXISTS (
-            SELECT 1 FROM alergias 
-            WHERE dni = NEW.dni AND (huevo = TRUE OR lacteos = TRUE OR frutosSecos = TRUE OR pescado = TRUE)
-        ) OR EXISTS (
-            SELECT 1 FROM intolerancias 
-            WHERE dni = NEW.dni AND (lactosa = TRUE OR gluten = TRUE OR fructosa = TRUE)
-        ) THEN
-            SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'Error RN-05: Debe confirmar la lectura de la ficha de alergias/intolerancias antes de validar la asistencia.';
-        END IF;
-    END IF;
+	CALL pValidarAsistencia(NEW.asiste, NEW.fichaConfirmada, NEW.dni, NULL, NEW.oidM);
 END//
 
 -- Validación al actualizar una asistencia existente (ej. paso de lista)
@@ -89,18 +136,7 @@ CREATE TRIGGER t_validar_asistencia_update
 BEFORE UPDATE ON asistencias
 FOR EACH ROW
 BEGIN
-    IF NEW.Asiste = TRUE AND NEW.fichaConfirmada = FALSE THEN
-        IF EXISTS (
-            SELECT 1 FROM alergias 
-            WHERE dni = NEW.dni AND (huevo = TRUE OR lacteos = TRUE OR frutosSecos = TRUE OR pescado = TRUE)
-        ) OR EXISTS (
-            SELECT 1 FROM intolerancias 
-            WHERE dni = NEW.dni AND (lactosa = TRUE OR gluten = TRUE OR fructosa = TRUE)
-        ) THEN
-            SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'Error RN-05: Debe confirmar la lectura de la ficha de alergias/intolerancias antes de validar la asistencia.';
-        END IF;
-    END IF;
+    CALL pValidarAsistencia(NEW.asiste, NEW.fichaConfirmada, NEW.dni, NEW.oidAdW.oidM);
 END//
 
 DELIMITER ;
@@ -108,6 +144,28 @@ DELIMITER ;
 
 
 
+
+
+
+
+
+
+
+
+
+-- ---------------------------------------------------------------------
+-- Datos
+-- ---------------------------------------------------------------------
+INSERT INTO alumnos (dni, nombre, apellidos, curso, comedor) VALUES
+('12345678A', 'Lucía',   'García López',     2, TRUE),
+('23456789B', 'Mateo',   'Martínez Ruiz',    3, TRUE),
+('34567890C', 'Sofía',   'Sánchez Pérez',    1, TRUE),
+('45678901D', 'Hugo',    'Fernández Gómez',  4, FALSE),
+('56789012E', 'Daniela', 'Jiménez Díaz',     2, TRUE),
+('67890123F', 'Álvaro',  'Moreno Álvarez',   5, TRUE),
+('39482015L', 'Carmen',  'Navarro Torres',   3, TRUE),
+('77975237R', 'Juan',    'Romero Castillo',  1, FALSE),
+('72940183F', 'Elena',   'Ortega Morales',   6, TRUE);
 
 INSERT INTO intolerancias (lactosa, gluten, fructosa, dni) VALUES
 (TRUE,  FALSE, FALSE, '12345678A'),
