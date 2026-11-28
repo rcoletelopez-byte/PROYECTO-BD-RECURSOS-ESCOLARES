@@ -70,112 +70,66 @@ FOREIGN KEY (dni) REFERENCES alumnos(dni),
 FOREIGN KEY (oidL) REFERENCES libros(oidL) ON UPDATE CASCADE,
 CONSTRAINT ordenPositivo CHECK (ordenPrioridad >= 0)
 );
+
 DELIMITER //
 
--- RN-01: Bloquea nuevos préstamos si el alumno tiene algún libro vencido sin devolver
-CREATE OR REPLACE TRIGGER tPrestamosBiRn01
-BEFORE INSERT ON prestamos
+CREATE OR REPLACE TRIGGER tReservasBi
+BEFORE INSERT ON reservas
 FOR EACH ROW
 BEGIN
-    IF NEW.fechaDevolucion IS NULL THEN
-        IF (SELECT COUNT(*) FROM prestamos WHERE dni = NEW.dni AND fechaDevolucion IS NULL AND fechaLimite < NEW.fechaInicio) > 0 THEN
+    IF NEW.estadoReserva = 'Pendiente' THEN
+        IF (SELECT COUNT(*) FROM ejemplares WHERE oidL = NEW.oidL AND disponibilidad = TRUE) > 0 THEN
             SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'RN-01: el alumno tiene préstamos vencidos sin devolver';
+            SET MESSAGE_TEXT = 'RI-02.4: el libro tiene ejemplares disponibles, solo se reservan los agotados';
+        END IF;
+
+        IF (SELECT COUNT(*) FROM reservas WHERE dni = NEW.dni AND oidL = NEW.oidL AND estadoReserva IN ('Pendiente', 'Notificada')) > 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'El alumno ya tiene una reserva activa de este libro';
         END IF;
     END IF;
-END //
 
--- RN-02 (1/2): Exige una incidencia en el último préstamo antes de marcar el ejemplar como deteriorado o dañado
-CREATE OR REPLACE TRIGGER tEjemplaresBuRn02
+    IF NEW.ordenPrioridad = 0 THEN
+        SET NEW.ordenPrioridad = (SELECT IFNULL(MAX(ordenPrioridad), 0) + 1 FROM reservas WHERE oidL = NEW.oidL);
+    END IF;
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE OR REPLACE TRIGGER tEjemplaresBu
 BEFORE UPDATE ON ejemplares
 FOR EACH ROW
 BEGIN
-    IF NEW.estadoConservacion IN ('Deteriorado', 'Dañado')
-       AND IFNULL(OLD.estadoConservacion, '') NOT IN ('Deteriorado', 'Dañado') THEN
+    IF NEW.estadoConservacion = 'Deteriorado' AND OLD.estadoConservacion <> 'Deteriorado' THEN
         IF NOT EXISTS (
             SELECT 1
             FROM incidencias
-            WHERE oidP = (
-                SELECT oidP
-                FROM prestamos
-                WHERE oidE = NEW.oidE
-                ORDER BY fechaInicio DESC, oidP DESC
-                LIMIT 1
-            )
+            WHERE oidP = (SELECT MAX(oidP) FROM prestamos WHERE oidE = NEW.oidE)
         ) THEN
             SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'RN-02: para marcar un ejemplar como deteriorado hay que registrar la incidencia en su último préstamo';
+            SET MESSAGE_TEXT = 'RN-02: para marcar un ejemplar como deteriorado hay que registrar la incidencia';
         END IF;
     END IF;
 END //
-
--- RN-02 (2/2): Asegura que cualquier incidencia registrada se asocie al último préstamo del ejemplar
-CREATE OR REPLACE TRIGGER tIncidenciasBiRn02
-BEFORE INSERT ON incidencias
-FOR EACH ROW
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM prestamos p1
-        JOIN prestamos p2 ON p2.oidE = p1.oidE
-        WHERE p1.oidP = NEW.oidP
-          AND (p2.fechaInicio > p1.fechaInicio OR (p2.fechaInicio = p1.fechaInicio AND p2.oidP > p1.oidP))
-    ) THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'RN-02: la incidencia debe asociarse al último préstamo del ejemplar';
-    END IF;
-END //
-
--- RN-03: Impide tener más de 2 libros de lectura en préstamo activo simultáneamente (excluye libros de texto)
-CREATE OR REPLACE TRIGGER tPrestamosBiRn03
-BEFORE INSERT ON prestamos
-FOR EACH ROW
-BEGIN
-    IF NEW.fechaDevolucion IS NULL THEN
-        IF (SELECT l.genero FROM ejemplares e JOIN libros l ON l.oidL = e.oidL WHERE e.oidE = NEW.oidE) <> 'Texto' THEN
-            IF (
-                SELECT COUNT(*)
-                FROM prestamos p
-                JOIN ejemplares e ON e.oidE = p.oidE
-                JOIN libros l ON l.oidL = e.oidL
-                WHERE p.dni = NEW.dni AND p.fechaDevolucion IS NULL AND l.genero <> 'Texto'
-            ) >= 2 THEN
-                SIGNAL SQLSTATE '45000'
-                SET MESSAGE_TEXT = 'RN-03: máximo 2 libros de lectura en préstamo activo';
-            END IF;
-        END IF;
-    END IF;
-END //
-
--- RN-06: Garantiza que cada ejemplar físico posea un código identificativo único
-CREATE OR REPLACE TRIGGER tEjemplaresBiRn06
-BEFORE INSERT ON ejemplares
-FOR EACH ROW
-BEGIN
-    IF EXISTS (SELECT 1 FROM ejemplares WHERE codigo = NEW.codigo) THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'RN-06: ya existe un ejemplar registrado con ese código';
-    END IF;
-END //
-
 DELIMITER ;
 
+	
 
--- Alumnos (datos exactos de los escenarios del documento)
+
 INSERT INTO alumnos (dni, nombre, apellidos, curso, comedor) VALUES
-('51234876P', 'Pablo',   'Gil Soto',           3, TRUE),
-('72940183F', 'Lucía',   'Pérez Ruiz',         2, TRUE),
-('77975237R', 'Juan',    'Martín García',      1, TRUE),
-('40679852K', 'Sara',    'Gómez Díaz',         2, FALSE),
-('89635244G', 'Rafael',  'Navarro Villalobos', 3, FALSE),
-('56789012E', 'Daniela', 'Moreno Torres',      6, TRUE),
-('23456789B', 'Mateo',   'Jiménez Navarro',    3, FALSE),
-('12345678A', 'Lucía',   'Gómez Ortiz',        2, TRUE),
-('66698510S', 'Nuria',   'Campos Rey',         4, FALSE),
-('39482015L', 'Carmen',  'Ortiz Vega',         1, TRUE),
-('78901234G', 'Elena',   'Serrano Molina',     5, FALSE);
+('51234876P', 'Pablo',   'García Pérez',    3, TRUE),
+('72940183F', 'Lucía',   'Martínez Ruiz',   2, FALSE),
+('77975237R', 'Juan',    'López Sánchez',   4, TRUE),
+('40679852K', 'Sara',    'Gómez Díaz',      1, FALSE),
+('89635244G', 'Rafael',  'Fernández Gil',   5, TRUE),
+('56789012E', 'Daniela', 'Moreno Torres',   6, TRUE),
+('23456789B', 'Mateo',   'Jiménez Navarro', 3, FALSE),
+('12345678A', 'Lucía',   'Gómez Ortiz',     2, TRUE),
+('66698510S', 'Nuria',   'Romero Castro',   4, FALSE),
+('39482015L', 'Carlos',  'Vázquez Alonso',  1, TRUE),
+('78901234G', 'Elena',   'Serrano Molina',  5, FALSE);
 
--- Libros
+-- Libros (se elimina esLibroTexto porque no existe en tu tabla)
 INSERT INTO libros (oidL, titulo, editorial, genero, esLecturaObligatoria) VALUES
 (1,  'Jojolion',                  'Ivrea',      'Aventura',        TRUE),
 (2,  'Matilda',                   'SM',         'Infantil',        TRUE),
@@ -189,21 +143,21 @@ INSERT INTO libros (oidL, titulo, editorial, genero, esLecturaObligatoria) VALUE
 (10, 'Lengua Castellana 6.º',     'Santillana', 'Texto',           FALSE),
 (11, 'Fundación',                 'Debolsillo', 'Ciencia Ficción', FALSE);
 
--- Ejemplares (nacen en TRUE para que RC-02.1 permita registrar sus préstamos activos)
+-- Ejemplares (codigo convertido a INT y disponibilidad añadida explícitamente)
 INSERT INTO ejemplares (oidE, codigo, estadoConservacion, disponibilidad, oidL) VALUES
-(1,  1,  'Perfecto', TRUE, 1),
-(2,  2,  'Perfecto', TRUE, 2),
-(3,  3,  'Bueno',    TRUE, 6),
-(4,  4,  'Perfecto', TRUE, 6),
-(5,  5,  'Regular',  TRUE, 6),
-(6,  6,  'Bueno',    TRUE, 7),
-(7,  7,  'Regular',  TRUE, 8),
-(8,  8,  'Bueno',    TRUE, 9),
-(9,  9,  'Bueno',    TRUE, 9),
-(10, 10, 'Perfecto', TRUE, 4),
-(11, 11, 'Perfecto', TRUE, 3),
-(12, 12, 'Perfecto', TRUE, 5),
-(13, 13, 'Perfecto', TRUE, 10);
+(1,  1,  'Perfecto', FALSE, 1),
+(2,  2,  'Perfecto', FALSE, 2),
+(3,  3,  'Bueno',    TRUE,  6),
+(4,  4,  'Perfecto', FALSE, 6),
+(5,  5,  'Regular',  TRUE,  6),
+(6,  6,  'Bueno',    FALSE, 7),
+(7,  7,  'Regular',  TRUE,  8),
+(8,  8,  'Bueno',    FALSE, 9),
+(9,  9,  'Bueno',    TRUE,  9),
+(10, 10, 'Perfecto', FALSE, 4),
+(11, 11, 'Perfecto', FALSE, 3),
+(12, 12, 'Perfecto', TRUE,  5),
+(13, 13, 'Perfecto', FALSE, 10);
 
 -- Préstamos
 INSERT INTO prestamos (oidP, fechaInicio, fechaLimite, fechaDevolucion, dni, oidE) VALUES
@@ -221,28 +175,17 @@ INSERT INTO prestamos (oidP, fechaInicio, fechaLimite, fechaDevolucion, dni, oid
 (13, '2026-10-05', '2026-10-19', '2026-10-19', '23456789B', 7),
 (14, '2026-09-15', '2026-09-29', '2026-09-25', '12345678A', 12);
 
--- Incidencias
+-- Incidencias ('Grave' cambiado a 'Alta' para coincidir con el ENUM)
 INSERT INTO incidencias (descripcionDesperfecto, gravedad, oidP) VALUES
 ('Páginas arrancadas', 'Alta',  2),
 ('Páginas pintadas',   'Leve',  8),
 ('Libro mojado',       'Media', 13),
 ('Páginas pintadas',   'Leve',  13);
 
--- Escenario 2 (RN-02): Se marca Matilda (ejemplar 2) como Deteriorado tras registrar la incidencia en el préstamo 2
-UPDATE ejemplares
-SET estadoConservacion = 'Deteriorado'
-WHERE oidE = 2;
-
--- Escenario 6: Préstamo activo de Nuria sobre Matilda (ejemplar 2)
 INSERT INTO prestamos (oidP, fechaInicio, fechaLimite, fechaDevolucion, dni, oidE) VALUES
 (6, '2026-11-02', '2026-11-16', NULL, '66698510S', 2);
 
--- Se actualiza a FALSE la disponibilidad de todos los ejemplares con préstamo activo
-UPDATE ejemplares
-SET disponibilidad = FALSE
-WHERE oidE IN (SELECT oidE FROM prestamos WHERE fechaDevolucion IS NULL);
-
--- Reservas (se ejecutan al final cuando Matilda ya figura como no disponible para cumplir tReservasBi)
+-- Reservas
 INSERT INTO reservas (fechaSolicitud, ordenPrioridad, estadoReserva, dni, oidL) VALUES
 ('2026-11-02', 1, 'Pendiente',  '89635244G', 2),
 ('2026-11-04', 2, 'Pendiente',  '51234876P', 2),
@@ -251,110 +194,3 @@ INSERT INTO reservas (fechaSolicitud, ordenPrioridad, estadoReserva, dni, oidL) 
 ('2026-09-20', 1, 'Completada', '89635244G', 6),
 ('2026-10-10', 1, 'Cancelada',  '23456789B', 3),
 ('2026-11-10', 1, 'Pendiente',  '12345678A', 11);
-
--- =====================================================================
--- 1. PRUEBAS PARA tPrestamosBiRn01 (RN-01: Bloqueo por préstamos vencidos)
--- =====================================================================
-
--- [FALLA - Salta tPrestamosBiRn01]
--- Juan (77975237R) tiene el préstamo 3 vencido desde el 2026-10-30 (Escenario 1).
--- Al intentar sacar otro libro el 2026-11-02, el trigger bloquea el INSERT.
--- INSERT INTO prestamos (fechaInicio, fechaLimite, fechaDevolucion, dni, oidE)
--- VALUES ('2026-11-02', '2026-11-16', NULL, '77975237R', 3);
-
--- [PASA - No salta]
--- Rafael (89635244G) tiene el préstamo 9 activo, pero vence el 2026-12-02 (en plazo).
--- Como no tiene ningún préstamo vencido el 2026-11-20, el INSERT se permite.
- INSERT INTO prestamos (fechaInicio, fechaLimite, fechaDevolucion, dni, oidE)
- VALUES ('2026-11-20', '2026-12-04', NULL, '89635244G', 5);
-
-
--- =====================================================================
--- 2. PRUEBAS PARA tIncidenciasBiRn02 (RN-02: Incidencia al último préstamo)
--- =====================================================================
-
--- [FALLA - Salta tIncidenciasBiRn02]
--- El ejemplar 3 (El Hobbit) tuvo primero el préstamo 7 (Juan) y después el 8 (Rafael).
--- Al intentar asociar un desperfecto al préstamo antiguo (7), el trigger lo rechaza.
--- INSERT INTO incidencias (descripcionDesperfecto, gravedad, oidP)
--- VALUES ('Páginas pintadas', 'Leve', 7);
-
--- [PASA - No salta]
--- Asociar la incidencia al último préstamo registrado de ese ejemplar (8) sí se permite.
-INSERT INTO incidencias (descripcionDesperfecto, gravedad, oidP)
-VALUES ('Páginas arrancadas', 'Media', 8);
-
-
--- =====================================================================
--- 3. PRUEBAS PARA tEjemplaresBuRn02 (RN-02: Deteriorado exige incidencia)
--- Nota: Este trigger actúa sobre UPDATE en ejemplares, no sobre INSERT.
--- =====================================================================
-
--- [FALLA - Salta tEjemplaresBuRn02]
--- El último préstamo del ejemplar 12 (La historia interminable) es el 14 y no tiene incidencias.
--- Intentar marcarlo directamente como 'Deteriorado' dispara el trigger y bloquea el UPDATE.
--- UPDATE ejemplares
--- SET estadoConservacion = 'Deteriorado'
--- WHERE oidE = 12;
-
--- [PASA - No salta]
--- Primero registramos la incidencia sobre su último préstamo (14) con un INSERT,
--- y ahora el trigger sí permite actualizar el ejemplar 12 a 'Deteriorado'.
-INSERT INTO incidencias (descripcionDesperfecto, gravedad, oidP)
-VALUES ('Libro mojado', 'Alta', 14);
-
-UPDATE ejemplares
-SET estadoConservacion = 'Deteriorado'
-WHERE oidE = 12;
-
-
--- =====================================================================
--- 4. PRUEBAS PARA tPrestamosBiRn03 (RN-03: Máximo 2 libros de lectura activos)
--- =====================================================================
-
--- [FALLA - Salta tPrestamosBiRn03]
--- Sara (40679852K) ya tiene 2 libros de lectura activos: préstamos 4 y 5 (Escenario 3).
--- Al intentar sacar un 3.º de lectura (ejemplar 7), el trigger bloquea el INSERT.
--- INSERT INTO prestamos (fechaInicio, fechaLimite, fechaDevolucion, dni, oidE)
--- VALUES ('2026-11-02', '2026-11-16', NULL, '40679852K', 7);
-
--- [PASA - No salta]
--- Daniela (56789012E) tiene 3 préstamos activos, pero 2 son de 'Texto' (10 y 11) y solo 1 de lectura (12).
--- Como los de texto no cuentan, puede sacar su 2.º libro de lectura (ejemplar 7) sin que salte el trigger.
-INSERT INTO prestamos (fechaInicio, fechaLimite, fechaDevolucion, dni, oidE)
-VALUES ('2026-11-12', '2026-11-26', NULL, '56789012E', 7);
-
-
--- =====================================================================
--- 5. PRUEBAS PARA tEjemplaresBiRn06 (RN-06: Código de ejemplar único)
--- =====================================================================
-
--- [FALLA - Salta tEjemplaresBiRn06]
--- El código 1 ya pertenece al ejemplar 1 (Jojolion). El trigger bloquea el duplicado.
--- INSERT INTO ejemplares (codigo, estadoConservacion, disponibilidad, oidL)
--- VALUES (1, 'Perfecto', TRUE, 11);
-
--- [PASA - No salta]
--- Al usar un código libre (14) para dar de alta una copia de Fundación (oidL = 11), se inserta sin problemas.
-INSERT INTO ejemplares (codigo, estadoConservacion, disponibilidad, oidL)
-VALUES (14, 'Perfecto', TRUE, 11);
-
-CREATE OR REPLACE VIEW vbiblioteca
-AS 
-SELECT * FROM alumnos NATURAL JOIN prestamos NATURAL JOIN ejemplares NATURAL JOIN incidencias NATURAL JOIN reservas;
-SELECT * FROM alumnos a
-LEFT JOIN prestamos p ON a.dni = p.dni
-LEFT JOIN ejemplares e ON p.oidE = e.oidE
-LEFT JOIN libros lp ON e.oidL = lp.oidL
-LEFT JOIN incidencias i ON p.oidP = i.oidP
-LEFT JOIN reservas r ON a.dni = r.dni
-LEFT JOIN libros lr ON r.oidL = lr.oidL;
-
-
-
-
-
-
-
-
-

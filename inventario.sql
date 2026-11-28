@@ -1,5 +1,3 @@
-
-
 DROP TABLE IF EXISTS movimientosStock;
 DROP TABLE IF EXISTS pedidosCompra;
 DROP TABLE IF EXISTS proveedores;
@@ -64,16 +62,16 @@ CREATE TRIGGER tArticulosBu
 BEFORE UPDATE ON articulos
 FOR EACH ROW
 BEGIN
-    SET @alertaStock = NULL;
+    IF NEW.stockActual = 0 THEN
+        SET NEW.estadoArticulo = 'Sin Unidades';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Sin unidades';
+    ELSEIF NEW.stockActual <= NEW.stockMinimo THEN
+        SET NEW.estadoArticulo = 'Requiere Reposicion';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Requiere reposición';
+    ELSE
+        SET NEW.estadoArticulo = 'Cantidad Adecuada';
 
-    SET NEW.estadoArticulo = CASE
-        WHEN NEW.stockActual = 0 THEN 'Sin Unidades'
-        WHEN NEW.stockActual <= NEW.stockMinimo THEN 'Requiere Reposicion'
-        ELSE 'Cantidad Adecuada'
-    END;
 
-    IF NEW.stockActual = 0 AND OLD.stockActual > 0 THEN
-        SET @alertaStock = CONCAT('SinStock: ', NEW.nombre, ' se ha quedado sin unidades');
     END IF;
 END //
 
@@ -85,29 +83,14 @@ BEFORE INSERT ON movimientosStock
 FOR EACH ROW
 BEGIN
     DECLARE vStock INT DEFAULT 0;
-    DECLARE vDelta INT DEFAULT 0;
-
-    SET @alertaStock = NULL;
-
-    SELECT stockActual INTO vStock
-      FROM articulos
-     WHERE oidAr = NEW.oidAr;
-
-    IF NEW.tipoMvto IN ('Salida', 'Baja') AND NEW.cantidad > vStock THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock insuficiente para realizar el movimiento';
-    END IF;
-
-    SET vDelta = CASE NEW.tipoMvto
-        WHEN 'Entrada' THEN NEW.cantidad
-        WHEN 'Salida'  THEN -NEW.cantidad
-        WHEN 'Baja'    THEN -NEW.cantidad
-        ELSE 0
-    END;
-
-    IF vDelta <> 0 THEN
-        UPDATE articulos
-           SET stockActual = vStock + vDelta
+    
+    IF NEW.tipoMvto IN ('Salida', 'Baja') THEN
+        SELECT stockActual INTO vStock
+          FROM articulos
          WHERE oidAr = NEW.oidAr;
+        IF NEW.cantidad > vStock THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock insuficiente para realizar el movimiento';
+        END IF;
     END IF;
 END //
 
@@ -241,9 +224,9 @@ INSERT INTO pedidosCompra (oidPc, fechaPedido, unidades, precio, oidAr, oidPr) V
 -- ---------------------------------------------------------------------
 -- RC-03.2: sacar más unidades de las que hay (tizas tiene 0) -> ERROR
 -- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Salida', 1, 'Prueba', 7);
--- RN-04: llevar las cuerdas a 0 -> estado 'Sin Unidades' y mostrar alerta 'SinStock'
+-- RN-04: llevar las cuerdas a 0 -> estado 'Sin Unidades' y aviso 'SinStock'
 -- INSERT INTO movimientosStock (fecha, tipoMvto, cantidad, motivo, oidAr) VALUES ('2026-11-12', 'Baja', 3, 'Prueba', 3);
--- SELECT @alertaStock AS alerta;
+
 -- Subir el mínimo de las probetas a 20 -> pasa solo a 'Requiere Reposicion'
 -- UPDATE articulos SET stockMinimo = 20 WHERE oidAr = 14;
 -- Comprobación: el stock de cada artículo debe coincidir con los comentarios de arriba
